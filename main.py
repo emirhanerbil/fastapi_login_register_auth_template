@@ -6,11 +6,12 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from models import UserRegister, UserLogin, UserInDB
 from utils.security import create_access_token, hash_password, verify_password, verify_token
-from utils.db import get_users_collection
+from utils.db import *
 from utils.logging import setup_logger
 from utils.validators import validate_password
 from utils.exceptions import UserNotFoundException, InvalidCredentialsException
 from utils.helpers import get_current_time
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 # Logger'ı ayarlıyoruz
 logger = setup_logger()
@@ -43,18 +44,16 @@ async def get_register_page(request: Request):
 # Kayıt olma işlemi
 @app.post("/register")
 async def register(request: Request, username: str = Form(...), password: str = Form(...),email: str = Form(...)):
-    
-
     # Kullanıcı adı olup olmadığını kontrol et
-    existing_user = await users_collection.find_one({"username": username})
-    if existing_user:
-        raise HTTPException(status_code=400, detail="Username already exists")
+    username_existed = is_username_existed(users_collection,username)
+    if username_existed:
+        return templates.TemplateResponse("register.html", {"request": request,"error" : "Bu kullanıcı adı sistemimizde kayıtlıdır."})
     
     
     # Kullanıcı maili mevcut olup olmadığını kontrol et
-    existing_user = await users_collection.find_one({"email": email})
-    if existing_user:
-        raise HTTPException(status_code=400, detail="Mail already exists")
+    email_existed = is_email_existed(users_collection,email)
+    if email_existed:
+        return templates.TemplateResponse("register.html", {"request": request,"error" : "Bu mail sistemimizde kayıtlıdır."})
     
     #şifre doğrulama
     validate_password(password)
@@ -68,8 +67,19 @@ async def register(request: Request, username: str = Form(...), password: str = 
     )
     await users_collection.insert_one(user_in_db.dict())
     
+    # Kayıt olma başarılıysa token oluştur
+    access_token = create_access_token(data={"sub": username})
+    
+    response = RedirectResponse(url="/dashboard", status_code=303)
+    response.set_cookie(
+        key="access_token", 
+        value=f"Bearer {access_token}", 
+        httponly=True, 
+        max_age=18000 + 10800  # 300 dakika + 3 saat(utc'den dolayı) (saniye cinsinden)
+    )
+    
     logger.info(f"New user registered: {username} at {get_current_time()}")
-    return {"message": "User registered successfully"}
+    return response
 
 
 # Giriş yapma sayfasını yükler
@@ -91,7 +101,12 @@ async def login(request: Request, username: str = Form(...), password: str = For
     access_token = create_access_token(data={"sub": username})
     
     response = RedirectResponse(url="/dashboard", status_code=303)
-    response.set_cookie(key="access_token", value=f"Bearer {access_token}", httponly=True)
+    response.set_cookie(
+        key="access_token", 
+        value=f"Bearer {access_token}", 
+        httponly=True, 
+        max_age=18000 + 10800  # 300 dakika + 3 saat(utc'den dolayı) (saniye cinsinden)
+    )
     
     logger.info(f"User {username} logged in at {get_current_time()}")
     return response
@@ -131,8 +146,8 @@ async def logout(request: Request):
 
 
 
-@app.exception_handler(HTTPException)
-async def http_exception_handler(request: Request, exc: HTTPException):
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
     # Hata kodunu ve hata türünü print ile kontrol edelim
     print(f"Handling exception with status code: {exc.status_code}")
 
