@@ -8,7 +8,7 @@ from models import UserRegister, UserLogin, UserInDB
 from utils.security import create_access_token, hash_password, verify_password, verify_token
 from utils.db import *
 from utils.logging import setup_logger
-from utils.validators import validate_password
+from utils.validators import *
 from utils.exceptions import UserNotFoundException, InvalidCredentialsException
 from utils.helpers import get_current_time
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -45,18 +45,21 @@ async def get_register_page(request: Request):
 @app.post("/register")
 async def register(request: Request, username: str = Form(...), password: str = Form(...),email: str = Form(...)):
     # Kullanıcı adı olup olmadığını kontrol et
-    username_existed = is_username_existed(users_collection,username)
+    username_existed = await is_username_existed(users_collection,username)
     if username_existed:
         return templates.TemplateResponse("register.html", {"request": request,"error" : "Bu kullanıcı adı sistemimizde kayıtlıdır."})
     
     
     # Kullanıcı maili mevcut olup olmadığını kontrol et
-    email_existed = is_email_existed(users_collection,email)
+    email_existed = await is_email_existed(users_collection,email)
     if email_existed:
         return templates.TemplateResponse("register.html", {"request": request,"error" : "Bu mail sistemimizde kayıtlıdır."})
     
-    #şifre doğrulama
-    validate_password(password)
+    #şifre uzunluk doğrulama
+    password_valid = is_password_valid(password)
+    if not password_valid:
+        return templates.TemplateResponse("register.html", {"request": request,"error" : "Şifreniz 8-20 karakter uzunluğunda olmalıdır."})
+    
 
     # Şifreyi hashleyip kullanıcıyı kaydetme
     hashed_password = hash_password(password)
@@ -129,6 +132,7 @@ def get_current_user(request: Request):
 async def get_dashboard(request: Request):
     try:
         user = get_current_user(request)
+        print(user)
     except HTTPException:
         return RedirectResponse(url="/login")
     
